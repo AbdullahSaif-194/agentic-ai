@@ -52,7 +52,10 @@ st.markdown("---")
 
 # ── Chat History ───────────────────────────────────────────────────────────────
 if "history" not in st.session_state:
-    st.session_state.history = []
+    st.session_state.history = []        # for display (dicts)
+
+if "lc_messages" not in st.session_state:
+    st.session_state.lc_messages = []    # for agent (LangChain objects) ← MEMORY
 
 for msg in st.session_state.history:
     with st.chat_message(msg["role"]):
@@ -67,10 +70,11 @@ if prompt := st.chat_input("Ask me anything to research…"):
 
     # Show user message
     st.session_state.history.append({"role": "user", "content": prompt})
+    st.session_state.lc_messages.append(HumanMessage(content=prompt))  # ← add to memory
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Run agent with live status updates
+    # Run agent — pass FULL conversation history so it remembers context
     with st.chat_message("assistant"):
         status = st.empty()
         searches_done = []
@@ -80,7 +84,7 @@ if prompt := st.chat_input("Ask me anything to research…"):
 
         try:
             for event in research_agent.stream(
-                {"messages": [HumanMessage(content=prompt)]},
+                {"messages": st.session_state.lc_messages},  # ← full history
                 stream_mode="values",
             ):
                 last = event["messages"][-1]
@@ -109,6 +113,8 @@ if prompt := st.chat_input("Ask me anything to research…"):
 
         st.markdown(final_answer)
 
+    # Save assistant reply to memory too
+    st.session_state.lc_messages.append(AIMessage(content=final_answer))  # ← add to memory
     st.session_state.history.append(
         {"role": "assistant", "content": final_answer, "searches": searches_done}
     )

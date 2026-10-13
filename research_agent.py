@@ -1,6 +1,6 @@
 from typing import Annotated
 from langchain_groq import ChatGroq
-from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.tools import DuckDuckGoSearchResults
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -15,7 +15,9 @@ class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
-search_tool = DuckDuckGoSearchRun(name="web_search")
+# Use html backend — avoids external API calls (Wikipedia, Wiktionary) that
+# fail on restricted networks like Streamlit Cloud
+search_tool = DuckDuckGoSearchResults(name="web_search", backend="html", num_results=5)
 tools = [search_tool]
 
 # ── LLM ───────────────────────────────────────────────────────────────────────
