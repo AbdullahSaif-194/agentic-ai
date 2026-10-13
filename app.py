@@ -86,6 +86,7 @@ if prompt := st.chat_input("Ask me anything to research…"):
             for event in research_agent.stream(
                 {"messages": st.session_state.lc_messages},  # ← full history
                 stream_mode="values",
+                config={"recursion_limit": 8},  # ← hard stop: max 8 steps
             ):
                 last = event["messages"][-1]
 
