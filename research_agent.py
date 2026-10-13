@@ -1,7 +1,7 @@
 from typing import Annotated
 from langchain_groq import ChatGroq
 from langchain_community.tools import DuckDuckGoSearchResults
-from langchain_core.messages import SystemMessage
+from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -19,51 +19,62 @@ class AgentState(TypedDict):
 search_tool = DuckDuckGoSearchResults(name="web_search", backend="html", num_results=3)
 tools = [search_tool]
 
-# ── System Prompt ──────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = SystemMessage(content="""You are a helpful AI research assistant.
-When the user asks a question:
-- Search the web MAXIMUM 2 times to gather information.
-- After searching, ALWAYS provide a final answer immediately. Do NOT keep searching.
-- Be concise and clear. Format your answer in markdown with bullet points where helpful.
-- If you already have enough information, answer directly without searching again.""")
-
-# ── LLM ───────────────────────────────────────────────────────────────────────
+# ── LLM (two versions) ────────────────────────────────────────────────────────
 llm = ChatGroq(
     model="openai/gpt-oss-120b",
     temperature=0,
     groq_api_key=os.getenv("GROQ_API_KEY"),
 )
-llm_with_tools = llm.bind_tools(tools)
+llm_with_tools = llm.bind_tools(tools)   # can search
+llm_no_tools   = llm                     # cannot search → must answer
+
+SYSTEM = SystemMessage(content=(
+    "You are a helpful AI research assistant. "
+    "Answer questions clearly and concisely using markdown."
+))
+
+FORCE_MSG = HumanMessage(content=(
+    "You have finished searching. "
+    "Now give me your final answer based on the search results above. "
+    "Do NOT call any tools."
+))
 
 # ── Nodes ─────────────────────────────────────────────────────────────────────
 def agent_node(state: AgentState):
-    """LLM decides: answer directly or call a tool."""
-    # Always prepend system prompt
-    messages = [SYSTEM_PROMPT] + state["messages"]
-    response = llm_with_tools.invoke(messages)
+    """LLM with tools — may decide to search or answer directly."""
+    response = llm_with_tools.invoke([SYSTEM] + state["messages"])
+    return {"messages": [response]}
+
+def force_answer_node(state: AgentState):
+    """LLM WITHOUT tools — forced to produce a final text answer."""
+    response = llm_no_tools.invoke([SYSTEM] + state["messages"] + [FORCE_MSG])
     return {"messages": [response]}
 
 def should_continue(state: AgentState):
-    """Route to tool execution or finish. Stop after 6 messages to prevent loops."""
+    """
+    After agent_node runs:
+      - Agent wants to search AND < 2 searches done  → go to tools
+      - Agent wants to search BUT ≥ 2 searches done  → force_answer (no tool access)
+      - Agent gave a text answer                     → END
+    """
     last = state["messages"][-1]
-    # Count tool calls made so far to enforce max 2 searches
-    tool_call_count = sum(
-        1 for m in state["messages"]
-        if hasattr(m, "tool_calls") and m.tool_calls
-    )
-    if last.tool_calls and tool_call_count < 2:
-        return "tools"
+    completed = sum(1 for m in state["messages"] if isinstance(m, ToolMessage))
+
+    if last.tool_calls:
+        return "tools" if completed < 2 else "force_answer"
     return END
 
 # ── Graph ─────────────────────────────────────────────────────────────────────
 tool_node = ToolNode(tools)
 
 graph = StateGraph(AgentState)
-graph.add_node("agent", agent_node)
-graph.add_node("tools", tool_node)
+graph.add_node("agent",        agent_node)
+graph.add_node("tools",        tool_node)
+graph.add_node("force_answer", force_answer_node)
+
 graph.set_entry_point("agent")
 graph.add_conditional_edges("agent", should_continue)
 graph.add_edge("tools", "agent")
+graph.add_edge("force_answer", END)
 
-# recursion_limit stops infinite loops as a hard safety net
 research_agent = graph.compile()

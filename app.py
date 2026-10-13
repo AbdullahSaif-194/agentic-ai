@@ -104,6 +104,18 @@ if prompt := st.chat_input("Ask me anything to research…"):
         except Exception as e:
             final_answer = f"⚠️ Error: {e}"
 
+        # Fallback: if agent ended without a text answer (edge case), ask LLM directly
+        if not final_answer and not final_answer.strip():
+            from langchain_groq import ChatGroq
+            from langchain_core.messages import SystemMessage
+            fallback_llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0,
+                                    groq_api_key=os.getenv("GROQ_API_KEY"))
+            fallback_resp = fallback_llm.invoke(
+                [SystemMessage(content="Answer the user's question concisely based on what you know.")]
+                + st.session_state.lc_messages
+            )
+            final_answer = fallback_resp.content
+
         status.empty()
 
         # Show searches
